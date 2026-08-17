@@ -195,8 +195,24 @@ class SSO
         update_user_meta($user_id, 'mem_status', $wpStatus);
         update_user_meta($user_id, 'mem_type', $wpType);
 
+        // Fetch the user object unconditionally — needed for both the
+        // active-status capability below and the benefits-based vote_*
+        // capabilities that already existed.
+        $user = get_user_by('id', $user_id);
+
+        // Grants access to other members' opt-in personal info on
+        // provider profile pages (member-profile.php checks
+        // current_user_can('view_member_content')). Based on
+        // Membership.ReceivesMemberBenefits — same signal already used
+        // elsewhere in this file (vote_md/vote_ih) to mean "active."
         if ($benefits === true) {
-            $user = get_user_by('id', $user_id);
+            $user->add_cap('view_member_content');
+            $this->log('Granted view_member_content', ['wp_user_id' => $user_id, 'benefits' => $benefits]);
+        } else {
+            $user->remove_cap('view_member_content');
+        }
+
+        if ($benefits === true) {
             if ($typeName === 'Surgeon/Physician Membership') {
                 $user->add_cap('vote_md');
                 $this->log('Granted vote_md', ['wp_user_id' => $user_id]);
@@ -237,6 +253,17 @@ class SSO
                 $user->remove_cap('vote_md');
                 $user->remove_cap('vote_ih');
             }
+        }
+
+        // Grants/revokes access to other members' opt-in personal info
+        // on provider profile pages, re-evaluated on every login so a
+        // benefits change in MemberSuite (e.g. lapsed membership) takes
+        // effect immediately rather than only at account creation.
+        // Same ReceivesMemberBenefits signal used for vote_md/vote_ih.
+        if ($benefits === true) {
+            $user->add_cap('view_member_content');
+        } else {
+            $user->remove_cap('view_member_content');
         }
 
         // Backfill missing meta for all users
