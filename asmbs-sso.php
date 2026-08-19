@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Membersuite SSO
  * Description: MemberSuite reverse SSO authentication for ASMBS members and staff.
- * Version: 1.0.6
+ * Version: 1.0.7
  * Author: ASMBS
  */
 
