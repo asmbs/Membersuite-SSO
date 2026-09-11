@@ -8,6 +8,28 @@ class SSO
 {
     private string $logFile = '/tmp/sso-debug.log';
 
+    /**
+     * Membership.Product GUIDs that grant the vote_md capability.
+     * Matched against the raw GUID, not the display name, so a rename of
+     * the product in MemberSuite doesn't silently break voting access.
+     */
+    private const MD_PRODUCT_GUIDS = [
+        '05885462-0071-c5c8-b31b-0b498da7a5c1',
+        '05885462-0071-c0c7-6b53-0b498da7e0bb',
+        '05885462-0071-cd09-b325-0b4a0b99af04',
+        '05885462-0071-c722-1393-0b48bcb2a570',
+        '05885462-0071-ce0d-6958-0b48bcb26bf5',
+    ];
+
+    /**
+     * Membership.Product GUIDs that grant the vote_ih capability.
+     */
+    private const IH_PRODUCT_GUIDS = [
+        '05885462-0071-cf52-6e6d-0b498da28f79',
+        '05885462-0071-cabe-548b-0b4a0ba05536',
+        '05885462-0071-c126-a69c-0b48bcb424a4',
+    ];
+
     public function __construct()
     {
         add_action('template_redirect', [$this, 'handle'], 1);
@@ -94,7 +116,11 @@ class SSO
         $client   = new Client();
         $response = $client->post('https://rest.membersuite.com/platform/v2/dataSuite/executeSearch', [
             'json'    => [
-                'msql' => "select top 1 ID, LocalID, FirstName, LastName, EmailAddress, Membership.ReceivesMemberBenefits, Membership.Type.name, Status.Name from Individual where (ID='" . $guid . "')"
+                // Membership.Product added alongside Membership.Type.name —
+                // Product is the GUID used for vote_md/vote_ih capability
+                // grants; Type.name is kept only for the mem_type WP meta
+                // label (see resolveType()).
+                'msql' => "select top 1 ID, LocalID, FirstName, LastName, EmailAddress, Membership.ReceivesMemberBenefits, Membership.Product, Membership.Type.name, Status.Name from Individual where (ID='" . $guid . "')"
             ],
             'headers' => [
                 'Accept'        => 'application/json',
@@ -154,14 +180,15 @@ class SSO
 
     private function createWPAccount(array $whoami): int
     {
-        $id         = $whoami['id'];
-        $localID    = $whoami['localID'];
-        $email      = $whoami['emailAddress'];
-        $firstName  = $whoami['firstName'];
-        $lastName   = $whoami['lastName'];
-        $typeName   = $whoami['membership.Type.name'];
-        $benefits   = $whoami['membership.ReceivesMemberBenefits'];
-        $statusName = $whoami['status.Name'];
+        $id           = $whoami['id'];
+        $localID      = $whoami['localID'];
+        $email        = $whoami['emailAddress'];
+        $firstName    = $whoami['firstName'];
+        $lastName     = $whoami['lastName'];
+        $typeName     = $whoami['membership.Type.name'];
+        $productGuid  = $whoami['membership.Product'] ?? null;
+        $benefits     = $whoami['membership.ReceivesMemberBenefits'];
+        $statusName   = $whoami['status.Name'];
 
         $this->log('Creating new WP account', ['email' => $email, 'id' => $id, 'localID' => $localID]);
 
@@ -212,14 +239,17 @@ class SSO
             $user->remove_cap('view_member_content');
         }
 
-        if ($benefits === true) {
-            if ($typeName === 'Surgeon/Physician Membership') {
+        // vote_md / vote_ih are now granted by Membership.Product GUID
+        // rather than the Type.name display string, so a rename of the
+        // product in MemberSuite doesn't silently break voting access.
+        if ($benefits === true && $productGuid !== null) {
+            if (in_array($productGuid, self::MD_PRODUCT_GUIDS, true)) {
                 $user->add_cap('vote_md');
-                $this->log('Granted vote_md', ['wp_user_id' => $user_id]);
+                $this->log('Granted vote_md', ['wp_user_id' => $user_id, 'productGuid' => $productGuid]);
             }
-            if ($typeName === 'Integrated Health') {
+            if (in_array($productGuid, self::IH_PRODUCT_GUIDS, true)) {
                 $user->add_cap('vote_ih');
-                $this->log('Granted vote_ih', ['wp_user_id' => $user_id]);
+                $this->log('Granted vote_ih', ['wp_user_id' => $user_id, 'productGuid' => $productGuid]);
             }
         }
 
@@ -228,9 +258,10 @@ class SSO
 
     private function logWPUser(int $wp_user_id, array $whoami): void
     {
-        $user     = get_user_by('id', $wp_user_id);
-        $typeName = $whoami['membership.Type.name'];
-        $benefits = $whoami['membership.ReceivesMemberBenefits'];
+        $user        = get_user_by('id', $wp_user_id);
+        $typeName    = $whoami['membership.Type.name'];
+        $productGuid = $whoami['membership.Product'] ?? null;
+        $benefits    = $whoami['membership.ReceivesMemberBenefits'];
 
         if ($typeName === null || $benefits === null) {
             $this->log('No membership record found, preserving existing role', [
@@ -242,12 +273,20 @@ class SSO
             $this->log('Logging in user', ['wp_user_id' => $wp_user_id, 'role' => $wpRole]);
             $user->set_role($wpRole);
 
-            if ($benefits === true) {
-                if ($typeName === 'Surgeon/Physician Membership') {
+            // vote_md / vote_ih re-evaluated by Product GUID on every
+            // login, so a product change in MemberSuite takes effect
+            // immediately rather than only at account creation.
+            if ($benefits === true && $productGuid !== null) {
+                if (in_array($productGuid, self::MD_PRODUCT_GUIDS, true)) {
                     $user->add_cap('vote_md');
+                } else {
+                    $user->remove_cap('vote_md');
                 }
-                if ($typeName === 'Integrated Health') {
+
+                if (in_array($productGuid, self::IH_PRODUCT_GUIDS, true)) {
                     $user->add_cap('vote_ih');
+                } else {
+                    $user->remove_cap('vote_ih');
                 }
             } else {
                 $user->remove_cap('vote_md');
@@ -321,6 +360,12 @@ class SSO
         };
     }
 
+    /**
+     * Feeds the mem_type WordPress meta label only — not used for any
+     * access-control decision. vote_md/vote_ih are decided by Product
+     * GUID (see MD_PRODUCT_GUIDS / IH_PRODUCT_GUIDS above), independent
+     * of this method.
+     */
     private function resolveType(?string $typeName): string
     {
         return match ($typeName) {

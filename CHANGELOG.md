@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.8] - 2026-09-11
+### Changed
+- `vote_md` / `vote_ih` capability grants now match on `Membership.Product` GUID instead of `Membership.Type.name` string, so a product rename in MemberSuite no longer silently breaks voting access
+
 ## [1.0.7] - 2026-08-17
 ### Added
 - SSO plugin now grants/revokes a `view_member_content` capability based on `Membership.ReceivesMemberBenefits`, evaluated on both account creation and every subsequent login (same signal already used for `vote_md`/`vote_ih`).
