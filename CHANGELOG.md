@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.9] - 2026-10-15
+### Changed
+- Revised msql to also get membership.product.code and set that to mem_type for wordpress users on login
+
 ## [1.0.8] - 2026-09-11
 ### Changed
 - `vote_md` / `vote_ih` capability grants now match on `Membership.Product` GUID instead of `Membership.Type.name` string, so a product rename in MemberSuite no longer silently breaks voting access
