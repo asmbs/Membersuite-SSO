@@ -120,7 +120,7 @@ class SSO
                 // Product is the GUID used for vote_md/vote_ih capability
                 // grants; Type.name is kept only for the mem_type WP meta
                 // label (see resolveType()).
-                'msql' => "select top 1 ID, LocalID, FirstName, LastName, EmailAddress, Membership.ReceivesMemberBenefits, Membership.Product, Membership.Type.name, Status.Name from Individual where (ID='" . $guid . "')"
+                'msql' => "select top 1 ID, LocalID, FirstName, LastName, EmailAddress, Membership.ReceivesMemberBenefits, Membership.Product, Membership.Product.Code, Membership.Type.name, Status.Name from Individual where (ID='" . $guid . "')"
             ],
             'headers' => [
                 'Accept'        => 'application/json',
@@ -194,7 +194,8 @@ class SSO
 
         $wpRole   = RoleResolver::resolve($typeName, $benefits);
         $wpStatus = $this->resolveStatus($statusName);
-        $wpType   = $this->resolveType($typeName);
+        $productCode = $whoami['membership.Product.Code'] ?? '';
+        update_user_meta($wp_user_id, 'mem_type', $productCode);
 
         if (empty($wpRole)) {
             $this->log('No membership record found, defaulting to subscriber', ['email' => $email]);
@@ -318,8 +319,6 @@ class SSO
 
     private function backfillMeta(int $wp_user_id, array $whoami): void
     {
-        $typeName = $whoami['membership.Type.name'];
-
         if (empty(get_user_meta($wp_user_id, 'mem_guid', true))) {
             update_user_meta($wp_user_id, 'mem_guid', $whoami['id']);
             $this->log('Backfilled mem_guid', ['wp_user_id' => $wp_user_id, 'guid' => $whoami['id']]);
@@ -336,11 +335,12 @@ class SSO
             $this->log('Backfilled mem_status', ['wp_user_id' => $wp_user_id, 'status' => $wpStatus]);
         }
 
-        if (!empty($typeName) && empty(get_user_meta($wp_user_id, 'mem_type', true))) {
-            $wpType = $this->resolveType($typeName);
-            update_user_meta($wp_user_id, 'mem_type', $wpType);
-            $this->log('Backfilled mem_type', ['wp_user_id' => $wp_user_id, 'type' => $wpType]);
-        }
+        // Always overwrite mem_type to stay in sync with MemberSuite
+        update_user_meta($wp_user_id, 'mem_type', $whoami['membership.Product.Code'] ?? '');
+        $this->log('Updated mem_type', [
+            'wp_user_id' => $wp_user_id,
+            'type'       => $whoami['membership.Product.Code'] ?? '',
+        ]);
     }
 
     private function resolveStatus(?string $statusName): string
@@ -357,29 +357,6 @@ class SSO
             'Distinguished'    => 'D',
             'Terminated'       => 'T',
             default            => '',
-        };
-    }
-
-    /**
-     * Feeds the mem_type WordPress meta label only — not used for any
-     * access-control decision. vote_md/vote_ih are decided by Product
-     * GUID (see MD_PRODUCT_GUIDS / IH_PRODUCT_GUIDS above), independent
-     * of this method.
-     */
-    private function resolveType(?string $typeName): string
-    {
-        return match ($typeName) {
-            'Surgeon/Physician Membership',
-            'Surgeon/Physician Membership Renewal' => 'MD',
-            'Candidate Member'                     => 'CM',
-            'Corporate Council Representative'     => 'CC',
-            'Integrated Health',
-            'Integrated Health Renewal'            => 'IH',
-            'International',
-            'International Renewal'                => 'IN',
-            'Application'                          => 'AP',
-            'Friend'                               => 'FR',
-            default                                => '',
         };
     }
 
